@@ -278,6 +278,25 @@ rss是resident set size 即进程的常驻内存部分，进的内存总共有�
 * createWriteStream 创建可写流
 * pipe 管道的概念
 
+## 理解Buffer
+
+### Buffer结构
+
+Buffer是一个像Array的对象，但它主要用于操作字节
+
+Buffer是一个典型的JS和C++结合的模块，性能部分由C++实现，非性能相关的部分由JS实现
+![buffer_1.png](./image/buffer_1.png)
+
+Buffer属于堆外内存，Node在进程启动的时候就加载了，将其放在global上，在使用的时候不需要require使用 
+
+中文字在UTF-8编码下占用3个元素，字母和半角标点符号占用1个元素
+
+Buffer的元素为16进制的两位数，即0到255的数值
+
+如果给Buffer赋值的数小于0 则 该数逐次加256，直到得到一个0到255之间的整数，如果大于255，逐次减256，直到得到0-255区间的数值，如果是小数，舍弃小数部分，只保留整数
+
+### Buffer内存分配
+
 
 
 
