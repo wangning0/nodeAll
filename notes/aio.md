@@ -297,11 +297,156 @@ Buffer的元素为16进制的两位数，即0到255的数值
 
 ### Buffer内存分配
 
+Buffer对象的内存分配不是在V8的堆内存中，而是在Node的C++层面实现内存的申请的，Node在内存的使用上应用的是在C++层面申请内存、在JS中分配内存的策略
+
+为了高效的使用申请来的内存，Node采用了slab分配机制，slab是一种动态内存管理机制，slab就是一块申请好的固定大小的内存区域，slab具有如下3中状态
+
+* full
+* partial
+* empty
+
+需要一个Buffer对象
+
+```
+new Buffer(size)
+```
+
+8KB为界限区分大小Buffer对象，这个8KB也就是每个slab的大小值，在JS层面，作为单元进行内存的分配
+
+**分配小Buffer对象**
+
+如果指定Buffer的大小少于8 KB，Node会按照小对象的方式进行分配。Buffer的分配过程中主要使用一个局部变量pool作为中间处理对象，处于分配状态的slab单元都指向它。以下是分配一个全新的slab单元的操作，它会将新申请的SlowBuffer对象指向它
+
+```
+var pool;
+　
+function allocPool() {
+  pool = new SlowBuffer(Buffer.poolSize);
+  pool.used = 0;
+}
+```
+
+![](./image/buffer_2.png)
+
+此时，slab处于empty状态
+
+当构建小Buffer对象时，构造将会去检查pool对象，如果没有被创建，将会创建一个新的slab单元
+
+```
+if (!pool || pool.length - pool.used < this.length) allocPool();
+```
+
+同时当前Buffer对象的parent属性指向该slab，并记录下是从这个slab的哪个位置（offset）开始使用的，slab对象自身也记录被使用了多少字节，代码如下
+
+```
+this.parent = pool;
+this.offset = pool.used;
+pool.used += this.length;
+if (pool.used & 7) pool.used = (pool.used + 8) & ~7; 
+```
+
+![](./image/buffer_3.png)
+
+再创建对象时，构造过程中将会判断这个slab的剩余空间是不是够，如果够则使用剩余空间，并更新slab的分配状态，如果slab的剩余空间不够，将会创建新的slab，原slab中剩余的空间会造成浪费
+
+```
+new Buffer(1);
+new Buffer(8192);
+
+```
+
+造成大量的空间被浪费
+
+**分配大Buffer对象**
+
+如果需要超过8 KB的Buffer对象，将会直接分配一个SlowBuffer对象作为slab单元，这个slab单元将会被这个大Buffer对象独占
+
+```
+this.parent = new SlowBuffer(this.length);
+this.offset = 0;
+```
+
+### Buffer的转换
+
+Buffer对象可以与字符串之间相互转换，目前支持的：
+
+* ASCII
+* UTF-8
+* UTF-16LE/UCS-2
+* Base64
+* Binary
+* Hex
+
+**字符串转Buffer**
+
+字符串转Buffer对象主要是通过构造函数完成的
+
+`new Buffer(str, [encoding])`
+
+`buf.write(string, [offset], [length], [encoding])` 可以写入多种编码格式的数据，但是不建议，因为所用的字节长度不同
+
+**Buffer转字符串**
+
+Buffer的toString()可以将Buffer对象转换为字符串
+
+`buf.toString([encoding], [start], [end]) `
+
+### Buffer的拼接
+
+在拼接过程中，中文很容易出现乱码的问题，因为在UTF-8下，一个中文占3个字节
+
+`setEncoding()与string_decoder()` 方法，可以给可读流设置编码的方法
+
+```   
+   readable.setEncoding(encoding) 
+```
+
+该方法的作用是让data事件中传递的不再是Buffer对象，而是编码后的字符串
+
+在调用setEncoding()时，可读对象在内部设置了一个decoder对象，每次data时间都要通过decoder对象进行Buffer到字符串的解码，然后传递给调用者。
+
+但是无论如何转码，总是存在宽字节字符字符串被截断的问题
+
+内部实现，设置编码后，stringDecoder知道是以几个字节存储的，那么，当字节不够的时候会先保留在StringDecoder实例内部，等到数据来到后再进行组装
+
+只能处理Base64和UCS-2/UTF-16LE这3种编码,不是万能💊
+
+**正确拼接Buffer**
+
+剩下的解决方案只有将多个小Buffer对象拼接为一个Buffer对象
+
+```
+var chunks = [];
+var size = 0;
+res.on('data', function(chunk) {
+    size += chunk.size;
+    chunks.push(chunk);
+})
+res.on('end', function() {
+    var buf = Buffer.concat(chunks, size);
+    console.log(buf.toString('utf8'));
+})
+
+```
 
 
+Buffer.concat()方法生成一个合并的Buffer对象
+
+### Buffer 与性能
+
+在网络运输中，它的性能很好，可以提高效率
 
 
+文件读取
 
+Buffer的使用除了与字符串的转换有性能损耗之外，在文件的读取时，又一个`highWaterMark`设置对性能的影响至关重要
+
+`fs.createReadStream()`的工作方式是在内存中准备一段Buffer，然后再`fs.read()`读取时逐步从磁盘中将字节复制到Buffer中，完成一次读取时，则在这个Buffer中通过slice()方法取出部分数据作为一个小Buffer对象，在通过data时间传递给调用方，如果Buffer用完，则重新分配一个，如果还有剩余，则继续使用。
+
+Buffer的内存分配比较类似，highWaterMark的大小对性能有两个影响的点
+    
+* highWaterMark 设置对Buffer内存的分配和使用有一定影响
+* highWaterMark 设置过小，可能导致系统调用次数过多
 
 
 
