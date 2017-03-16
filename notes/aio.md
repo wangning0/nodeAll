@@ -448,10 +448,193 @@ Buffer的内存分配比较类似，highWaterMark的大小对性能有两个影�
 * highWaterMark 设置对Buffer内存的分配和使用有一定影响
 * highWaterMark 设置过小，可能导致系统调用次数过多
 
+## 网络编程
+
+Node提供了net、dgram、http、https这四个模块，分别用于处理TCP、UDP、HTTP、HTTPS，适用于服务端和客户端
+
+### 构建TCP服务
+
+OSI模型：
+
+* 物理层     网络物理硬件
+* 数据链路层   网络特有的链路借口
+* 网络层。     IP
+* 传输层       TCP／UDP
+* 会话层       通信链接／维持会话
+* 表示层       加密／解密
+* 应用层       HTTP
+
+许多应用层协议是基于TCP的，典型的HTTP、SMTP、IMAP等协议
 
 
+TCP通过三次握手连接后，会话形成，服务端和客户端之间才能互相发送数据，在创建会话的过程，服务端和客户端分别提供一个套接字，这两个套接字共同形成一个链接，服务端和客户端则通过套接字实现两者之间连接的操作
+
+### TCP服务的事件
+
+**服务器事件**
+
+对于通过`net.createServer()`创建的服务器而言，是一个EventEmitter实例，自定义事件：
+
+* listening： 调用server.listen()绑定端口时触发
+* connection：每个客户端套接字连接到服务端时触发，`net.createServer()`
+* close: 当服务器管事时触发，在调用server.close()后，服务器将停止接受新的套接字连接，但保持当前存在的连接，等待所有连接都断开后会触发改事件
+* error：服务器发生异常，将会触发该事件
+
+**连接事件**
+
+服务器可以同时与多个客户端保持连接，对于每个连接而言都是典型的可写可读`Stream`对象
+
+`Stream`对象可以用于服务端和客户端之间的通信，即可以通过data事件从一端读取另一端发来的数据，也可以通过write方法从一端向另一端发送数据
+
+* data 当一端调用write发送数据时，另一端会触发data事件，事件传递的数据即是write发送的数据
+* end：当连接中的任意一段发送了FIN数据时，会触发事件
+* connect: 该事件用于客户端，当套接字与服务端连接成功时会被触发
+* drain 当任意一段调用write发送数据时，当前这端会触发该事件
+* error 异常发生时，触发该事件 
+* close 当套接字完全关闭时，触发
+* timeout：当一定时间后连接不活跃，事件被触发
 
 
+### 构建UDP服务
+ 
+ UDP(用户数据包协议)，UDP不是面向连接的，没有拥塞控制、流量控制，在UDP中，一个套接字可以与多个UDP服务通信，网络差的时候丢包严重，但是无须连接，资源消耗低，处理快速灵活，视频、音频等，DNS服务也是基于它实现的
+ 
+ **创建UDP服务器端**
+ 
+ 创建UDP套接字十分简单，UDP套接字一旦创建，即可以作为客户端发送数据，也可以作为服务端接收数据
 
+```
+var dgram = require('dgram');
+var socket = dgram.cerateSocket('udp4');
+```
+ 
+ **创建UDP服务器端**
+ 
+ 若想让UDP套接字接收网络消息，只要调用dgram.bind(port, [address])方法对网卡和端口进行绑定即可
+ 
+ ```
+ var dgram = require("dgram");
+
+var server = dgram.createSocket("udp4");
+
+server.on("message", function (msg, rinfo) {
+  console.log("server got: " + msg + " from " +
+    rinfo.address + ":" + rinfo.port);
+});
+
+server.on("listening", function () {
+  var address = server.address();
+  console.log("server listening " +
+      address.address + ":" + address.port);
+});
+
+server.bind(41234);
+
+ ```
+ 
+ 该套接字将接收所有网卡上41234端口上的消息，在绑定完成后，将触发listening事件
+ 
+ **创建UDP客户端**
+ 
+ ```
+ var dgram = require('dgram');
+
+var message = new Buffer("深入浅出Node.js");
+var client = dgram.createSocket("udp4");
+client.send(message, 0, message.length, 41234, "localhost", function(err, bytes) {
+  client.close();
+}); 
+ ```
+ 
+ `socket.send(buf, offset, length, port, address, [callback])`
+
+**UDP套接字事件**
+
+是一个EventEmitter的实例，而非Stream实例，具有以下自定义事件
+
+* message: 当UDP套接字侦听网卡端口后，接收到信息时触发该事件，Buffer信息对象和一个远程地址信息
+* listening： 当UDP套接字开始侦听时触发该事件
+* close：调用close方法时触发该事件
+* error： 当异常发生时触发事件
+
+### 构建HTTP服务
+
+Node的http模块包含对http处理的封装，在Node中，HTTP服务继承自TCP服务器(net模块)，它能够与多个客户端保持连接，由于其采用事件驱动的形式，并不是每一个连接创建额外的线程或进程，保持很低的内存占用，所以实现高并发
+
+在开启keepalive后，一个TCP会话可以用于多次请求和响应。TCP服务以connection为单位进行服务，HTTP服务以request为单位进行服务。http模块即是将connection到request的过程进行了封装
+
+![](./image/http_1.png)
+
+除此之外，http模块将连接所用套接字的读写抽象为ServerRequest和ServerResponse对象，它们分别对应请求和响应操作。在请求产生的过程中，http模块拿到连接中传来的数据，调用二进制模块http_parser进行解析，在解析完请求报文的报头后，触发request事件，调用用户的业务逻辑。
+
+![](./image/http_2.png)
+
+**HTTP请求**
+
+于TCP连接的读操作，http模块将其封装为ServerRequest对象。让我们再次查看前面的请求报文，报文头部将会通过http_parser进行解析
+
+```
+> GET / HTTP/1.1
+> User-Agent: curl/7.24.0 (x86_64-apple-darwin12.0) libcurl/7.24.0 OpenSSL/0.9.8r zlib/1.2.5
+> Host: 127.0.0.1:1337
+> Accept: */*
+> 
+```
+
+报文头第一行：被解析之后分解为如下属性
+
+* req.method
+* req.url
+* req.httpVersion
+
+其余报头是很规律的key:value格式，被解析后放置在req.headers
+
+**HTTP响应**
+
+再来看看HTTP响应对象。HTTP响应相对简单一些，它封装了对底层连接的写操作，可以将其看成一个可写的流对象。它影响响应报文头部信息的API为res.setHeader()和res.writeHead()。
+
+我们可以调用setHeader进行多次设置，但只有调用writeHeader后，报文头才会写入到连接中
+
+报文体部分则是调用res.write()和res.end()方法实现，后者与前者的差别在于res.end()会先调用write()发送数据，然后发送信号告知服务器这次响应结束
+
+结束时调用res.end()结束请求
+
+**HTTP服务的事件**
+
+connection事件：在开始HTTP请求和响应前，客户端与服务器端需要建立底层的TCP连接，这个连接可能因为开启了keep-alive，可以在多次请求响应之间使用；当这个连接建立时，服务器触发一次connection事件。
+•  request事件：建立TCP连接后，http模块底层将在数据流中抽象出HTTP请求和HTTP响应，当请求数据发送到服务器端，在解析出HTTP请求头后，将会触发该事件；在res.end()后，TCP连接可能将用于下一次请求响应。
+•  close事件：与TCP服务器的行为一致，调用server.close()方法停止接受新的连接，当已有的连接都断开时，触发该事件；可以给server.close()传递一个回调函数来快速注册该事件。
+•  checkContinue事件：某些客户端在发送较大的数据时，并不会将数据直接发送，而是先发送一个头部带Expect: 100-continue的请求到服务器，服务器将会触发checkContinue事件；如果没有为服务器监听这个事件，服务器将会自动响应客户端100 Continue的状态码，表示接受数据上传；如果不接受数据的较多时，响应客户端400 Bad Request拒绝客户端继续发送数据即可。需要注意的是，当该事件发生时不会触发request事件，两个事件之间互斥。当客户端收到100 Continue后重新发起请求时，才会触发request事件。
+•  connect事件：当客户端发起CONNECT请求时触发，而发起CONNECT请求通常在HTTP代理时出现；如果不监听该事件，发起该请求的连接将会关闭。
+•  upgrade事件：当客户端要求升级连接的协议时，需要和服务器端协商，客户端会在请求头中带上Upgrade字段，服务器端会在接收到这样的请求时触发该事件。这在后文的WebSocket部分有详细流程的介绍。如果不监听该事件，发起该请求的连接将会关闭。
+•  clientError事件：连接的客户端触发error事件时，这个错误会传递到服务器端，此时触发该事件
+
+
+**构建WebSocket服务**
+
+Websocket实现了客户端与服务端之间的长连接，而Node事件驱动的方式十分擅长与大量的客户端保持高并发连接
+
+客户端与服务端只建立一个TCP连接，可以使用更少的连接
+
+可以实现server push
+
+协议头更轻量，减少数据传送量
+
+**TLS／SSL**
+
+* 浏览器将自己支持的加密规则发送给网站
+* server从中选出一组加密算法与HASH算法，并将自己的身份信息以证书的形式发送回浏览器（网站地址、公钥、颁发机构）
+* 浏览器获得了服务器的证书之后
+
+    * 验证合法性(合法则出现小锁头)
+    * 浏览器生成一串随机数的密码，并用证书中提供的公钥加密
+    * 使用约定好的HASH计算握手信息，使用生成的随机数对信息加密，在发送给服务器
+    
+* 服务器接受浏览器的操作后
+
+    * 使用私钥进行解密，并验证HASH是否与浏览器发送来的一致
+    * 使用密码加密一段握手信息，发送给浏览器
+    
+* 浏览器解密并计算握手信息的HASH，如果与服务器发来的HASH一致，则握手结束，之后由B生成的随机密码并利用对称算法加密  
 
 
