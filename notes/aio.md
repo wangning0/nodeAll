@@ -638,3 +638,130 @@ Websocket实现了客户端与服务端之间的长连接，而Node事件驱动�
 * 浏览器解密并计算握手信息的HASH，如果与服务器发来的HASH一致，则握手结束，之后由B生成的随机密码并利用对称算法加密  
 
 
+## 玩转进程
+
+Node运行在单个进程的单个线程上，带来的好处是：程序状态是单一的，在没有多线程的情况下没有锁、线程同步问题，操作系统在调度时也因为较少上下文的切换，可以很好的提高CPU的使用率
+
+但是现在的CPU基本都是多核的，一个Node进程只能利用一个核，那么Node如何利用多核CPU服务器？
+
+Node执行在单线程，如果抛出异常没有及时处理，那么将会引起整个进程的崩溃，如何保证进程的健壮性和稳定性？
+
+### 多进程架构
+
+Node提供了`child_process`模块，并且也提供了`child_process.fork()`函数供我们实现进程的复制
+
+**Master-Worker模式**
+
+又称主从模式，途中的进程氛围主进程和工作进程，主进程不负责具体的业务处理，而是负责调度或管理工作进程，趋向于稳定的，工作进程负责具体的业务处理，因为业务的多种多样，甚至一项业务由多人开发完成
+
+![process.png](./image/process.png)
+
+
+通过fork()复制的进程都是一个独立的进程，这个进程中有着独立而全新的V8实例。它需要至少30毫秒的启动时间和至少10 MB的内存
+
+**创建子进程**
+
+* spawn(): 启动一个子进程来执行命令
+* exec(): 启动一个子进程来执行命令，与spawn()不同的是其接口不同，它有一个回调函数获知子进程的状况
+* execFile()：启动一个子进程来执行可执行文件
+* fork()：与spawn()类似，不同点在于它创建Node的子进程只需指定要执行的JavaScript文件模块即可
+
+![process_2.png](./image/process_2.png)
+
+
+可执行文件是指可以直接执行的文件，如果是JS文件通过execFile()运行，首行添加
+
+```
+#!/user/bin/env/node
+```
+
+**进程间通信**
+
+send()实现发送数据，message事件实现收听数据
+
+```
+// parent.js
+var cp = require('child_process');
+var n = cp.fork(__dirname + '/sub.js');
+
+n.on('message', function (m) {
+  console.log('PARENT got message:', m);
+});
+
+n.send({hello: 'world'});
+// sub.js
+process.on('message', function (m) {
+  console.log('CHILD got message:', m);
+});
+
+process.send({foo: 'bar'});
+```
+
+父子进程之间会创建IPC通道，通过IPC通道，父子进程之间通过message和send传递消息
+
+**进程间通信原理**
+
+IPC的实现技术有：命名管道、匿名管道、socket、信号量、共享内存、消息队列、Domain Socket等
+
+Node实现IPC通道的是管道技术，Node中管道是哥抽象层面的称呼，具体实现细节是libuv提供
+
+![process_3.png](./image/process_3.png)
+
+父进程在实际创建子进程之前会创建IPC通道并监听它，然后才真正创建出子进程，并通过环境变量(NODE_CHANNEL_FD)告诉子进程这个IPC通道的文件描述符。子进程在启动过程中，会根据文件描述符去连接这个已存在的IPC通道，从而完成父子进程之间的连接
+
+![process_4.png](./image/process_4.png)
+
+```
+// parent.js
+var cp = require('child_process');
+var child1 = cp.fork('child.js');
+var child2 = cp.fork('child.js');
+
+// Open up the server object and send the handle
+var server = require('net').createServer();
+server.listen(1337, function () {
+  child1.send('server', server);
+  child2.send('server', server);
+  // 关掉
+  server.close();
+}); 
+```
+
+```
+// child.js
+var http = require('http');
+var server = http.createServer(function (req, res) {
+  res.writeHead(200, {'Content-Type': 'text/plain'});
+  res.end('handled by child, pid is ' + process.pid + '\n');
+});
+
+process.on('message', function (m, tcp) {
+  if (m === 'server') {
+    tcp.on('connection', function (socket) {
+      server.emit('connection', socket);
+    });
+  }
+}); 
+```
+
+上述过程可以解决监听同一端口冲突的问题
+
+![process_5.png](./image/process_5.png)
+
+
+![process_6.png](./image/process_6.png)
+
+
+### 集群稳定之路
+
+**进程事件**
+
+子进程除了`send()`和`message`事件之外，还有：
+
+* error：当子进程无法被复制创建，无法被杀死，无法发送消息时会被触发该事件
+* exit：子进程退出时触发该事件，子进程如果是正常退出，这个事件的第一个参数时退出码，否则为null。如果进程是通过kill()方法被杀死的，会得到第二个参数，它表示杀死进程时的信号
+* close：在子进程的标准输入输出流中止时触发该事件，参数与exit相同。
+* disconnect：在父进程或子进程中调用disconnect()方法时触发该事件，在调用该方法时将关闭监听IPC通道。
+
+
+
