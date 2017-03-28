@@ -1,0 +1,22 @@
+{
+  "name": "node_all",
+  "version": "1.0.0",
+  "description": "关于Node的资料",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangning0/nodeAll.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/wangning0/nodeAll/issues"
+  },
+  "homepage": "https://github.com/wangning0/nodeAll#readme",
+  "dependencies": {
+    "lodash": "^4.17.4"
+  }
+}
