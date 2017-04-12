@@ -228,7 +228,15 @@ server.listen(1337);
  *      readable.pipe()可以链式调用
  * readable.read([size])
  *      改方法可以从内部的buffer获取数据，如果没有可获取的数据那么会返回null,默认会返回一个Buffer对象
- *      除非设置了readable.setEncoding()方法
+ *      除非设置了readable.setEncoding()方法，该方法只有在暂停状态下才能被调用
+ *      在流动状态下，会自动被调用
+ * 
+ * readable.resume()
+ *      显示的调用，从pause=>flowing状态的切换
+ * readable.setEncoding(encoding)
+ *      为从Readable流中的数据设置默认的编码格式
+ * readable.unpipe()
+ * readable.unshift(chunk)
  */
 const readable = getReabableStreamSomehow();
 readable.on('data', (chunk) => {
