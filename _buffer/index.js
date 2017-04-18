@@ -1,4 +1,6 @@
 /**
+ * 创建buffer method
+ *
  * Buffer
  * 
  * 因为Buffer实例是用Buffer构造函数创建的，所以提供不同的参数创建不同的实例
@@ -248,3 +250,4 @@ for(const value of buf) {
  * 32位的机器是1GB
  * 64位的机器是2GB
  */
+>>>>>>> 5b4698ca6937f2b98a048227486b148ac888c05d
